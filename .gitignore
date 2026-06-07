@@ -1,0 +1,15 @@
+node_modules/
+android/app/build/
+android/.gradle/
+android/.idea/
+*.keystore
+.env
+.env.local
+.env.production
+.gradle/
+build/
+.idea/
+.DS_Store
+.expo/
+dist/
+.metro-health-check*

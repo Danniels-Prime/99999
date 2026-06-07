@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">OverlayLang</string>
+    <string name="accessibility_service_description">OverlayLang detects selected text to show instant translations in an overlay.</string>
+</resources>
