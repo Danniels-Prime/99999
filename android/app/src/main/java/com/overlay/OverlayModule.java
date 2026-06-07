@@ -2,105 +2,136 @@ package com.overlay;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
+import android.os.Build;
 import android.provider.Settings;
-
-import androidx.annotation.NonNull;
-
+import android.speech.tts.TextToSpeech;
+import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
-import com.facebook.react.modules.core.DeviceEventManagerModule;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
-/**
- * React Native bridge: exposes native overlay controls to JavaScript.
- *
- * JS usage:
- *   import { NativeModules } from 'react-native';
- *   const { OverlayModule } = NativeModules;
- *
- *   OverlayModule.showOverlay('hello', 1);
- *   OverlayModule.hideOverlay();
- *   OverlayModule.startServices();
- *   OverlayModule.hasOverlayPermission();  // returns Promise<boolean>
- *   OverlayModule.setLanguageDirection('en_es');
- */
 public class OverlayModule extends ReactContextBaseJavaModule {
-
-    private static final String PREFS = "overlay_lang_prefs";
-    private static final String PREF_LANG = "lang_direction";
-    private final ReactApplicationContext reactContext;
+    private static final int DAILY_LIMIT = 500;
+    private static final String PREFS = "overlay_prefs";
+    private TextToSpeech tts;
 
     public OverlayModule(ReactApplicationContext context) {
         super(context);
-        this.reactContext = context;
+        tts = new TextToSpeech(context, status -> {
+            if (status == TextToSpeech.SUCCESS) tts.setLanguage(new Locale("es", "ES"));
+        });
     }
 
-    @NonNull
     @Override
-    public String getName() {
-        return "OverlayModule";
+    public String getName() { return "OverlayModule"; }
+
+    @ReactMethod
+    public void speak(String text, String lang, Promise promise) {
+        try {
+            Locale locale = "es".equals(lang) ? new Locale("es", "ES") : Locale.ENGLISH;
+            tts.setLanguage(locale);
+            int result = tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "utterance");
+            promise.resolve(result == TextToSpeech.SUCCESS);
+        } catch (Exception e) { promise.reject("TTS_ERROR", e.getMessage()); }
     }
 
     @ReactMethod
-    public void showOverlay(String word, int mode) {
-        Intent intent = new Intent(reactContext, OverlayService.class);
-        intent.putExtra(OverlayService.EXTRA_WORD, word);
-        intent.putExtra(OverlayService.EXTRA_MODE, mode);
-        reactContext.startService(intent);
+    public void stopSpeaking(Promise promise) {
+        try { tts.stop(); promise.resolve(true); }
+        catch (Exception e) { promise.reject("TTS_ERROR", e.getMessage()); }
+    }
+
+    private String todayKey() {
+        return "daily_" + new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
     }
 
     @ReactMethod
-    public void hideOverlay() {
-        reactContext.stopService(new Intent(reactContext, OverlayService.class));
+    public void getDailyCount(Promise promise) {
+        promise.resolve(getReactApplicationContext()
+            .getSharedPreferences(PREFS, 0).getInt(todayKey(), 0));
     }
 
     @ReactMethod
-    public void startServices() {
-        reactContext.startService(new Intent(reactContext, OverlayService.class));
-        reactContext.startService(new Intent(reactContext, ClipboardMonitorService.class));
+    public void incrementDailyCount(Promise promise) {
+        SharedPreferences prefs = getReactApplicationContext().getSharedPreferences(PREFS, 0);
+        String key = todayKey();
+        int count = prefs.getInt(key, 0);
+        if (count >= DAILY_LIMIT) { promise.resolve(-1); return; }
+        prefs.edit().putInt(key, count + 1).apply();
+        promise.resolve(count + 1);
     }
 
     @ReactMethod
-    public void stopServices() {
-        reactContext.stopService(new Intent(reactContext, OverlayService.class));
-        reactContext.stopService(new Intent(reactContext, ClipboardMonitorService.class));
+    public void resetDailyCount(Promise promise) {
+        getReactApplicationContext().getSharedPreferences(PREFS, 0)
+            .edit().putInt(todayKey(), 0).apply();
+        promise.resolve(true);
     }
 
     @ReactMethod
-    public void setLanguageDirection(String direction) {
-        // direction: "en_es" or "es_en"
-        reactContext.getSharedPreferences(PREFS, 0)
-                .edit()
-                .putString(PREF_LANG, direction)
-                .apply();
-    }
-
-    @ReactMethod(isBlockingSynchronousMethod = true)
-    public boolean hasOverlayPermissionSync() {
-        return Settings.canDrawOverlays(reactContext);
+    public void getSystemLanguage(Promise promise) {
+        promise.resolve(Locale.getDefault().getLanguage());
     }
 
     @ReactMethod
-    public void requestOverlayPermission() {
-        Intent intent = new Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                android.net.Uri.parse("package:" + reactContext.getPackageName())
-        );
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        reactContext.startActivity(intent);
+    public void hasOverlayPermission(Promise promise) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+            promise.resolve(Settings.canDrawOverlays(getReactApplicationContext()));
+        else promise.resolve(true);
     }
 
     @ReactMethod
-    public void requestAccessibilityPermission() {
+    public void requestOverlayPermission(Promise promise) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && !Settings.canDrawOverlays(getReactApplicationContext())) {
+            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getReactApplicationContext().getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getReactApplicationContext().startActivity(intent);
+            promise.resolve(false);
+        } else { promise.resolve(true); }
+    }
+
+    @ReactMethod
+    public void startOverlayService(Promise promise) {
+        try {
+            Intent intent = new Intent(getReactApplicationContext(), ClipboardMonitorService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                getReactApplicationContext().startForegroundService(intent);
+            else getReactApplicationContext().startService(intent);
+            promise.resolve(true);
+        } catch (Exception e) { promise.reject("START_FAILED", e.getMessage()); }
+    }
+
+    @ReactMethod
+    public void stopOverlayService(Promise promise) {
+        try {
+            getReactApplicationContext().stopService(
+                new Intent(getReactApplicationContext(), ClipboardMonitorService.class));
+            getReactApplicationContext().stopService(
+                new Intent(getReactApplicationContext(), OverlayService.class));
+            promise.resolve(true);
+        } catch (Exception e) { promise.reject("STOP_FAILED", e.getMessage()); }
+    }
+
+    @ReactMethod
+    public void openAccessibilitySettings(Promise promise) {
         Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        reactContext.startActivity(intent);
+        getReactApplicationContext().startActivity(intent);
+        promise.resolve(true);
     }
 
-    // Allows JS to emit events back to native (used for close button in overlay)
     @ReactMethod
-    public void addListener(String eventName) {}
-
-    @ReactMethod
-    public void removeListeners(int count) {}
+    public void isAccessibilityServiceEnabled(Promise promise) {
+        String prefString = Settings.Secure.getString(
+            getReactApplicationContext().getContentResolver(),
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        String serviceName = getReactApplicationContext().getPackageName() + "/.LanguageAccessibilityService";
+        promise.resolve(prefString != null && prefString.contains(serviceName));
+    }
 }

@@ -1,261 +1,149 @@
-/**
- * OverlayCard — the floating translation popup.
- *
- * Registered as its own RN root component ("OverlayCard") so the native
- * OverlayService can mount it independently inside a WindowManager view.
- * Also usable as a regular component inside the main app (e.g. for preview).
- *
- * Props (from OverlayService initialProperties or JS parent):
- *   word   {string}  — the word/phrase to translate
- *   mode   {number}  — 1=translation only, 2=TTS+translation, 3=sentence, 4=clipboard
- *   onClose {fn}     — called when user taps ×
- */
-import React, { useEffect, useState, useCallback } from 'react';
-import {
-  View, Text, TouchableOpacity, ActivityIndicator,
-  StyleSheet, Animated, PanResponder, NativeModules,
-  AppRegistry, useColorScheme,
-} from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { lookup } from '../services/dictionary';
+import React, {useEffect, useState} from 'react';
+import {View, Text, TouchableOpacity, StyleSheet, ScrollView, NativeModules} from 'react-native';
+import {translate} from '../services/translation';
 
-const { OverlayModule } = NativeModules;
+const {OverlayModule} = NativeModules;
 
-const PREFS_KEY = 'overlay_lang_prefs';
-
-export default function OverlayCard({ word = '', mode = 1, onClose }) {
-  const [result, setResult] = useState(null);
-  const [showExamples, setShowExamples] = useState(false);
-  const [showPhonetics, setShowPhonetics] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const [direction, setDirection] = useState('en_es');
-
-  // Draggable position
-  const pan = useState(() => new Animated.ValueXY())[0];
-  const panResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onPanResponderGrant: () => {
-      pan.setOffset({ x: pan.x._value, y: pan.y._value });
-    },
-    onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], {
-      useNativeDriver: false,
-    }),
-    onPanResponderRelease: () => pan.flattenOffset(),
-  });
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const prefs = JSON.parse(await AsyncStorage.getItem(PREFS_KEY) || '{}');
-        const dir = prefs.langDirection || 'en_es';
-        const phonOn = prefs.phonetics !== false;
-        setDirection(dir);
-        setShowPhonetics(phonOn);
-
-        const data = await lookup(word, dir);
-        setResult(data);
-      } catch (_) {
-        setResult({ original: word, translation: '—', ipa: null, examples: [] });
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [word]);
-
-  const handleClose = useCallback(() => {
-    if (onClose) onClose();
-    else OverlayModule?.hideOverlay?.();
-  }, [onClose]);
-
-  const sourceLang = direction === 'en_es' ? '🇺🇸' : '🇪🇸';
-  const targetLang = direction === 'en_es' ? '🇪🇸' : '🇺🇸';
-
+function TappableWord({word, systemLang, showPhonetics}) {
+  const [mini, setMini] = useState(null);
+  const clean = word.replace(/[^a-zA-Zà-ÿ]/g, '');
+  if (!clean) return <Text style={styles.exampleWord}>{word} </Text>;
   return (
-    <Animated.View
-      style={[styles.card, { transform: pan.getTranslateTransform() }]}
-      {...panResponder.panHandlers}
-    >
-      {/* Header row */}
-      <View style={styles.header}>
-        <Text style={styles.wordText} numberOfLines={2}>
-          {sourceLang} <Text style={styles.word}>{word}</Text>
-        </Text>
-        <TouchableOpacity onPress={handleClose} style={styles.closeBtn}>
-          <Text style={styles.closeTxt}>✕</Text>
-        </TouchableOpacity>
-      </View>
-
-      {loading ? (
-        <ActivityIndicator color="#6C63FF" style={{ marginVertical: 16 }} />
-      ) : (
-        <>
-          {/* Translation — always shown */}
-          <View style={styles.translationRow}>
-            <Text style={styles.targetLangIcon}>{targetLang}</Text>
-            <Text style={styles.translation}>{result?.translation ?? '—'}</Text>
-          </View>
-
-          {/* IPA phonetics — English source only, Settings toggle */}
-          {showPhonetics && direction === 'en_es' && result?.ipa && (
-            <Text style={styles.ipa}>{result.ipa} · American English</Text>
-          )}
-
-          <View style={styles.divider} />
-
-          {/* Examples — behind a button */}
-          <TouchableOpacity
-            onPress={() => setShowExamples(v => !v)}
-            style={styles.examplesBtn}
-          >
-            <Text style={styles.examplesBtnTxt}>
-              {showExamples ? 'Hide examples ▲' : 'See examples ▼'}
-            </Text>
+    <View>
+      <TouchableOpacity onPress={() => {
+        const res = translate(clean, 'auto', systemLang, showPhonetics);
+        setMini(res.found ? res : null);
+      }}>
+        <Text style={styles.exampleWord}>{word} </Text>
+      </TouchableOpacity>
+      {mini && (
+        <View style={styles.miniCard}>
+          <TouchableOpacity onPress={() => setMini(null)} style={styles.miniCloseRow}>
+            <Text style={styles.miniClose}>×</Text>
           </TouchableOpacity>
-
-          {showExamples && result?.examples?.length > 0 && (
-            <View style={styles.examplesContainer}>
-              {result.examples.map((ex, i) => (
-                <View key={i} style={styles.exampleItem}>
-                  <Text style={styles.exampleEN}>📖 {ex.en}</Text>
-                  <Text style={styles.exampleES}>📖 {ex.es}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {showExamples && (!result?.examples || result.examples.length === 0) && (
-            <Text style={styles.noExamples}>No examples available</Text>
-          )}
-        </>
+          <Text style={styles.miniTranslation}>{mini.translation}</Text>
+          {mini.showPhonetic && mini.phonetic ? (
+            <Text style={styles.miniPhonetic}>[{mini.phonetic}]</Text>
+          ) : null}
+        </View>
       )}
-
-      <View style={styles.modeTag}>
-        <Text style={styles.modeTagTxt}>{modeName(mode)}</Text>
-      </View>
-    </Animated.View>
+    </View>
   );
 }
 
-function modeName(mode) {
-  switch (mode) {
-    case 1: return 'double-tap';
-    case 2: return 'ghost drag';
-    case 3: return 'selection';
-    case 4: return 'clipboard';
-    default: return '';
-  }
+export default function OverlayCard({
+  sourceText, translation, phonetic, example, similar = [],
+  ttsText, ttsLang, showPhonetics, systemLang, onDismiss, autoPlay = true,
+}) {
+  const [speaking, setSpeaking] = useState(false);
+  const [showExample, setShowExample] = useState(false);
+
+  const speak = async () => {
+    try {
+      setSpeaking(true);
+      await OverlayModule.speak(ttsText || translation, ttsLang || 'es');
+      setSpeaking(false);
+    } catch { setSpeaking(false); }
+  };
+
+  const stop = async () => {
+    try { await OverlayModule.stopSpeaking(); setSpeaking(false); } catch {}
+  };
+
+  useEffect(() => {
+    if (autoPlay && translation) speak();
+    return () => { OverlayModule.stopSpeaking?.().catch?.(() => {}); };
+  }, [translation]);
+
+  const exampleWords = example ? example.split(' ') : [];
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.header}>
+        <Text style={styles.sourceText}>{sourceText}</Text>
+        <View style={styles.headerActions}>
+          <TouchableOpacity onPress={speaking ? stop : speak} style={styles.ttsBtn}>
+            <Text style={styles.ttsIcon}>{speaking ? '⏹' : '🔊'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onDismiss} style={styles.closeBtn}>
+            <Text style={styles.closeText}>×</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <Text style={styles.translation}>{translation}</Text>
+      {showPhonetics && phonetic ? (
+        <Text style={styles.phonetic}>[{phonetic}]</Text>
+      ) : null}
+
+      {example ? (
+        <TouchableOpacity
+          style={styles.examplesBtn}
+          onPress={() => setShowExample(v => !v)}>
+          <Text style={styles.examplesBtnText}>
+            {showExample ? 'Hide example' : 'Show example'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {showExample && example ? (
+        <View style={styles.exampleBox}>
+          <Text style={styles.exampleLabel}>Example</Text>
+          <View style={styles.exampleWordRow}>
+            {exampleWords.map((word, i) => (
+              <TappableWord
+                key={i}
+                word={word}
+                systemLang={systemLang}
+                showPhonetics={showPhonetics}
+              />
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {similar.length > 0 ? (
+        <View style={styles.similarBox}>
+          <Text style={styles.similarLabel}>Similar</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {similar.map((w, i) => (
+              <View key={i} style={styles.chip}>
+                <Text style={styles.chipEn}>{w.en}</Text>
+                <Text style={styles.chipEs}>{w.es}</Text>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: '#1A1A2E',
-    borderRadius: 18,
-    padding: 16,
-    minWidth: 280,
-    maxWidth: 340,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.45,
-    shadowRadius: 16,
-    elevation: 24,
-    borderWidth: 1,
-    borderColor: '#6C63FF33',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  wordText: {
-    flex: 1,
-    fontSize: 15,
-    color: '#B0AEC8',
-    marginRight: 8,
-  },
-  word: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#EAEAF5',
-  },
-  closeBtn: {
-    padding: 4,
-    marginTop: -2,
-  },
-  closeTxt: {
-    fontSize: 18,
-    color: '#6C63FF',
-    fontWeight: '600',
-  },
-  translationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 6,
-  },
-  targetLangIcon: {
-    fontSize: 22,
-  },
-  translation: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#6C63FF',
-    flex: 1,
-    flexWrap: 'wrap',
-  },
-  ipa: {
-    fontSize: 13,
-    color: '#9E9CBC',
-    fontStyle: 'italic',
-    marginBottom: 8,
-    marginLeft: 2,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#2A2A4A',
-    marginVertical: 10,
-  },
-  examplesBtn: {
-    paddingVertical: 4,
-  },
-  examplesBtnTxt: {
-    color: '#6C63FF',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  examplesContainer: {
-    marginTop: 8,
-    gap: 10,
-  },
-  exampleItem: {
-    gap: 2,
-  },
-  exampleEN: {
-    fontSize: 12,
-    color: '#C8C7DC',
-    lineHeight: 18,
-  },
-  exampleES: {
-    fontSize: 12,
-    color: '#9E9CBC',
-    lineHeight: 18,
-    fontStyle: 'italic',
-  },
-  noExamples: {
-    fontSize: 12,
-    color: '#555575',
-    marginTop: 6,
-  },
-  modeTag: {
-    marginTop: 10,
-    alignSelf: 'flex-end',
-  },
-  modeTagTxt: {
-    fontSize: 10,
-    color: '#444464',
-    fontStyle: 'italic',
-  },
+  card: {backgroundColor: '#1e1e2e', borderRadius: 16, padding: 20, marginTop: 16, elevation: 8, borderLeftWidth: 4, borderLeftColor: '#6c63ff'},
+  header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8},
+  sourceText: {color: '#aaa', fontSize: 14, flex: 1},
+  headerActions: {flexDirection: 'row', alignItems: 'center'},
+  ttsBtn: {padding: 4, marginRight: 8},
+  ttsIcon: {fontSize: 18},
+  closeBtn: {padding: 4},
+  closeText: {color: '#888', fontSize: 22, lineHeight: 22},
+  translation: {color: '#fff', fontSize: 26, fontWeight: 'bold'},
+  phonetic: {color: '#6c63ff', fontSize: 14, marginTop: 4, fontStyle: 'italic'},
+  examplesBtn: {marginTop: 12, alignSelf: 'flex-start', backgroundColor: '#2a2a3e', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6},
+  examplesBtnText: {color: '#6c63ff', fontSize: 13, fontWeight: '600'},
+  exampleBox: {marginTop: 12, backgroundColor: '#16162a', borderRadius: 10, padding: 12},
+  exampleLabel: {color: '#6c63ff', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8},
+  exampleWordRow: {flexDirection: 'row', flexWrap: 'wrap'},
+  exampleWord: {color: '#ddd', fontSize: 14, lineHeight: 22},
+  miniCard: {backgroundColor: '#2a2a3e', borderRadius: 6, padding: 8, marginBottom: 4, minWidth: 80},
+  miniCloseRow: {alignItems: 'flex-end'},
+  miniClose: {color: '#888', fontSize: 14},
+  miniTranslation: {color: '#fff', fontSize: 13, fontWeight: '600'},
+  miniPhonetic: {color: '#6c63ff', fontSize: 11, fontStyle: 'italic'},
+  similarBox: {marginTop: 14},
+  similarLabel: {color: '#6c63ff', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8},
+  chip: {backgroundColor: '#2a2a3e', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, marginRight: 8, alignItems: 'center'},
+  chipEn: {color: '#aaa', fontSize: 11},
+  chipEs: {color: '#fff', fontSize: 13, fontWeight: '600'},
 });
-
-// Register as a standalone RN root for OverlayService to mount
-AppRegistry.registerComponent('OverlayCard', () => OverlayCard);
