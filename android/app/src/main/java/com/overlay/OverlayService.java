@@ -3,161 +3,225 @@ package com.overlay;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.PixelFormat;
 import android.os.Build;
-import android.os.Handler;
 import android.os.IBinder;
-import android.os.Looper;
-import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.WindowManager;
-import android.widget.LinearLayout;
-import android.widget.TextView;
+
+import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
-import java.util.HashMap;
-import java.util.Map;
 
+import com.facebook.react.ReactApplication;
+import com.facebook.react.ReactInstanceManager;
+import com.facebook.react.ReactRootView;
+import com.facebook.react.bridge.Arguments;
+import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.modules.core.DeviceEventManagerModule;
+
+import java.util.Locale;
+
+/**
+ * Foreground service that:
+ *  1. Always reads the word/phrase aloud via TTS (no exceptions)
+ *  2. Shows a floating ReactRootView overlay card
+ *  3. Passes word + mode to JS via a RN event
+ */
 public class OverlayService extends Service {
-    public static final String ACTION_SHOW = "com.overlay.SHOW_OVERLAY";
-    public static final String ACTION_HIDE = "com.overlay.HIDE_OVERLAY";
 
-    private static final String CHANNEL_ID = "overlay_service_channel";
-    private static final int NOTIFICATION_ID = 1003;
-    private static final long AUTO_DISMISS_MS = 8000;
+    public static final String EXTRA_WORD = "word";
+    public static final String EXTRA_MODE = "mode";
 
-    private static final Map<String, String> QUICK_DICT = new HashMap<>();
-    static {
-        QUICK_DICT.put("hello", "hola"); QUICK_DICT.put("goodbye", "adiós");
-        QUICK_DICT.put("yes", "sí"); QUICK_DICT.put("no", "no");
-        QUICK_DICT.put("please", "por favor"); QUICK_DICT.put("thanks", "gracias");
-        QUICK_DICT.put("thank", "gracias"); QUICK_DICT.put("sorry", "lo siento");
-        QUICK_DICT.put("good", "bueno"); QUICK_DICT.put("bad", "malo");
-        QUICK_DICT.put("water", "agua"); QUICK_DICT.put("food", "comida");
-        QUICK_DICT.put("house", "casa"); QUICK_DICT.put("dog", "perro");
-        QUICK_DICT.put("cat", "gato"); QUICK_DICT.put("car", "coche");
-        QUICK_DICT.put("book", "libro"); QUICK_DICT.put("money", "dinero");
-        QUICK_DICT.put("time", "tiempo"); QUICK_DICT.put("day", "día");
-        QUICK_DICT.put("night", "noche"); QUICK_DICT.put("love", "amor");
-        QUICK_DICT.put("friend", "amigo"); QUICK_DICT.put("family", "familia");
-        QUICK_DICT.put("work", "trabajo"); QUICK_DICT.put("school", "escuela");
-        QUICK_DICT.put("red", "rojo"); QUICK_DICT.put("blue", "azul");
-        QUICK_DICT.put("green", "verde"); QUICK_DICT.put("white", "blanco");
-        QUICK_DICT.put("black", "negro"); QUICK_DICT.put("happy", "feliz");
-        QUICK_DICT.put("sad", "triste"); QUICK_DICT.put("big", "grande");
-        QUICK_DICT.put("small", "pequeño"); QUICK_DICT.put("new", "nuevo");
-        QUICK_DICT.put("old", "viejo"); QUICK_DICT.put("fast", "rápido");
-        QUICK_DICT.put("slow", "lento"); QUICK_DICT.put("hot", "caliente");
-        QUICK_DICT.put("cold", "frío"); QUICK_DICT.put("man", "hombre");
-        QUICK_DICT.put("woman", "mujer"); QUICK_DICT.put("child", "niño");
-        QUICK_DICT.put("city", "ciudad"); QUICK_DICT.put("country", "país");
-        QUICK_DICT.put("world", "mundo"); QUICK_DICT.put("life", "vida");
-    }
+    /** Double-tap: translation only */
+    public static final int MODE_TRANSLATION_ONLY = 1;
+    /** Ghost drag: TTS + translation */
+    public static final int MODE_TTS_PLUS_TRANSLATION = 2;
+    /** Long press / handle selection: sentence-level full translation */
+    public static final int MODE_SENTENCE = 3;
+    /** Clipboard copy: translation only */
+    public static final int MODE_CLIPBOARD = 4;
+
+    private static final String CHANNEL_ID = "overlay_lang_channel";
+    private static final int NOTIF_ID = 1001;
+    private static final String PREFS = "overlay_lang_prefs";
+    private static final String PREF_LANG_DIRECTION = "lang_direction"; // "en_es" or "es_en"
 
     private WindowManager windowManager;
-    private android.view.View overlayView;
-    private Handler handler = new Handler(Looper.getMainLooper());
-    private Runnable autoDismissRunnable;
+    private ReactRootView overlayView;
+    private TextToSpeech tts;
+    private boolean ttsReady = false;
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        startForeground(NOTIF_ID, buildNotification());
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        initTts();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        startForeground(NOTIFICATION_ID, buildNotification());
-        if (intent != null && ACTION_SHOW.equals(intent.getAction())) {
-            String text = intent.getStringExtra("text");
-            if (text != null && !text.isEmpty()) showOverlay(text.trim());
-        } else if (intent != null && ACTION_HIDE.equals(intent.getAction())) {
-            hideOverlay();
-        }
-        return START_NOT_STICKY;
+        if (intent == null) return START_STICKY;
+
+        String word = intent.getStringExtra(EXTRA_WORD);
+        int mode = intent.getIntExtra(EXTRA_MODE, MODE_TRANSLATION_ONLY);
+
+        if (word == null || word.isEmpty()) return START_STICKY;
+
+        // 1. Always speak the word/phrase aloud first — no exceptions
+        speakAloud(word);
+
+        // 2. Show overlay card
+        showOverlay(word, mode);
+
+        return START_STICKY;
     }
 
-    private void showOverlay(String sourceText) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                && !Settings.canDrawOverlays(this)) return;
-        hideOverlay();
+    // ── TTS ──────────────────────────────────────────────────────────────────
 
-        String translation = QUICK_DICT.getOrDefault(sourceText.toLowerCase(), sourceText);
+    private void initTts() {
+        tts = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                ttsReady = true;
+                applyTtsLocale();
+            }
+        });
+    }
 
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setBackgroundColor(0xF0222233);
-        layout.setPadding(40, 28, 40, 28);
+    private void applyTtsLocale() {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String direction = prefs.getString(PREF_LANG_DIRECTION, "en_es");
+        // Source language is what gets spoken
+        Locale locale = direction.equals("en_es") ? Locale.US : new Locale("es", "ES");
+        int result = tts.setLanguage(locale);
+        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+            tts.setLanguage(Locale.US); // fallback
+        }
+    }
 
-        TextView srcView = new TextView(this);
-        srcView.setText(sourceText);
-        srcView.setTextColor(0xFFAAAAAA);
-        srcView.setTextSize(13f);
+    /**
+     * Speaks the text aloud. Called unconditionally on every activation.
+     */
+    private void speakAloud(String text) {
+        if (!ttsReady || tts == null) return;
+        applyTtsLocale();
+        tts.stop();
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "overlay_lang_utterance");
+    }
 
-        TextView trlView = new TextView(this);
-        trlView.setText(translation);
-        trlView.setTextColor(0xFFFFFFFF);
-        trlView.setTextSize(20f);
-        trlView.setPadding(0, 10, 0, 0);
+    // ── Overlay window ────────────────────────────────────────────────────────
 
-        layout.addView(srcView);
-        layout.addView(trlView);
-        layout.setOnClickListener(v -> hideOverlay());
+    private void showOverlay(String word, int mode) {
+        removeOverlay();
 
-        int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                : WindowManager.LayoutParams.TYPE_PHONE;
+        ReactInstanceManager rim = ((ReactApplication) getApplication())
+                .getReactNativeHost()
+                .getReactInstanceManager();
+
+        overlayView = new ReactRootView(this);
+
+        // Pass data to the JS overlay component via initialProperties
+        android.os.Bundle props = new android.os.Bundle();
+        props.putString("word", word);
+        props.putInt("mode", mode);
+        overlayView.startReactApplication(rim, "OverlayCard", props);
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                type,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                        ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                        : WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
         );
         params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-        params.y = 200;
+        params.y = 120;
 
-        overlayView = layout;
+        makeDraggable(params);
         windowManager.addView(overlayView, params);
 
-        if (autoDismissRunnable != null) handler.removeCallbacks(autoDismissRunnable);
-        autoDismissRunnable = this::hideOverlay;
-        handler.postDelayed(autoDismissRunnable, AUTO_DISMISS_MS);
+        // Also send an event to the main RN app in case it's open
+        emitWordEvent(rim, word, mode);
     }
 
-    private void hideOverlay() {
-        if (overlayView != null) {
-            try { windowManager.removeView(overlayView); } catch (Exception ignored) {}
+    private void makeDraggable(WindowManager.LayoutParams params) {
+        // Touch listener is set after addView; stored as tag for later retrieval
+        // The actual drag is handled inside the JS OverlayCard using a PanResponder
+    }
+
+    public void removeOverlay() {
+        if (overlayView != null && overlayView.isAttachedToWindow()) {
+            windowManager.removeView(overlayView);
+            overlayView.unmountReactApplication();
             overlayView = null;
         }
-        if (autoDismissRunnable != null) {
-            handler.removeCallbacks(autoDismissRunnable);
-            autoDismissRunnable = null;
+    }
+
+    private void emitWordEvent(ReactInstanceManager rim, String word, int mode) {
+        try {
+            rim.getCurrentReactContext()
+                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                    .emit("onWordActivated", buildEventPayload(word, mode));
+        } catch (Exception ignored) {
+            // Main app may not be running; overlay still shows
+        }
+    }
+
+    private WritableMap buildEventPayload(String word, int mode) {
+        WritableMap map = Arguments.createMap();
+        map.putString("word", word);
+        map.putInt("mode", mode);
+        return map;
+    }
+
+    // ── Foreground notification ───────────────────────────────────────────────
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "OverlayLang Active",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("Keeps the overlay service running");
+            getSystemService(NotificationManager.class).createNotificationChannel(channel);
         }
     }
 
     private Notification buildNotification() {
+        Intent openApp = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, 0, openApp,
+                PendingIntent.FLAG_IMMUTABLE);
+
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("OverlayLang").setContentText("Overlay active")
-                .setSmallIcon(android.R.drawable.ic_menu_search)
-                .setOngoing(true).setPriority(NotificationCompat.PRIORITY_MIN).build();
+                .setContentTitle("OverlayLang")
+                .setContentText("Tap any word to translate")
+                .setSmallIcon(android.R.drawable.ic_menu_compass)
+                .setContentIntent(pi)
+                .setOngoing(true)
+                .build();
     }
 
-    private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel ch = new NotificationChannel(
-                    CHANNEL_ID, "Overlay Service", NotificationManager.IMPORTANCE_MIN);
-            NotificationManager mgr = getSystemService(NotificationManager.class);
-            if (mgr != null) mgr.createNotificationChannel(ch);
+    @Override
+    public void onDestroy() {
+        removeOverlay();
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
         }
+        super.onDestroy();
     }
 
+    @Nullable
     @Override
     public IBinder onBind(Intent intent) { return null; }
-
-    @Override
-    public void onDestroy() { super.onDestroy(); hideOverlay(); }
 }

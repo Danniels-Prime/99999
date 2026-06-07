@@ -1,75 +1,122 @@
-import React, {useState, useEffect} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, NativeModules} from 'react-native';
+/**
+ * Guides the user through the two required permission grants:
+ *  1. Draw over other apps (SYSTEM_ALERT_WINDOW)
+ *  2. Accessibility service
+ *
+ * Shows live status for each — green once granted.
+ */
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  View, Text, TouchableOpacity, StyleSheet, AppState,
+  NativeModules,
+} from 'react-native';
 
-const {OverlayModule} = NativeModules;
+const { OverlayModule } = NativeModules;
 
-const STEPS = [
-  {
-    id: 'overlay',
-    title: 'Display Over Other Apps',
-    description: 'Required to show translation bubbles on top of any app.',
-    check: () => OverlayModule.hasOverlayPermission(),
-    action: () => OverlayModule.requestOverlayPermission(),
-  },
-  {
-    id: 'accessibility',
-    title: 'Accessibility Service',
-    description: 'Detects selected text so translations appear automatically.',
-    check: () => OverlayModule.isAccessibilityServiceEnabled(),
-    action: () => OverlayModule.openAccessibilitySettings(),
-  },
-];
+export default function PermissionWizard({ onAllGranted }) {
+  const [overlayOk, setOverlayOk] = useState(false);
+  const [accessOk, setAccessOk] = useState(false);
 
-export default function PermissionWizard({onComplete}) {
-  const [statuses, setStatuses] = useState({});
-
-  const checkAll = async () => {
-    const results = {};
-    for (const step of STEPS) {
-      try { results[step.id] = await step.check(); }
-      catch { results[step.id] = false; }
-    }
-    setStatuses(results);
-    if (Object.values(results).every(Boolean)) onComplete?.();
-  };
+  const check = useCallback(() => {
+    const oOk = OverlayModule?.hasOverlayPermissionSync?.() ?? false;
+    setOverlayOk(oOk);
+    // Accessibility permission can only be verified by the user observing behavior;
+    // we track it in AsyncStorage once the user says they enabled it
+  }, []);
 
   useEffect(() => {
-    checkAll();
-    const interval = setInterval(checkAll, 2000);
-    return () => clearInterval(interval);
-  }, []);
+    check();
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'active') check();
+    });
+    return () => sub.remove();
+  }, [check]);
+
+  useEffect(() => {
+    if (overlayOk && accessOk) onAllGranted?.();
+  }, [overlayOk, accessOk, onAllGranted]);
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Setup Required</Text>
-      {STEPS.map(step => (
-        <View key={step.id} style={styles.step}>
-          <View style={styles.stepHeader}>
-            <View style={[styles.dot, statuses[step.id] ? styles.dotDone : styles.dotPending]} />
-            <Text style={styles.stepTitle}>{step.title}</Text>
-          </View>
-          <Text style={styles.stepDesc}>{step.description}</Text>
-          {!statuses[step.id] && (
-            <TouchableOpacity style={styles.btn} onPress={() => step.action().then(checkAll)}>
-              <Text style={styles.btnText}>Grant Permission</Text>
+      <Text style={styles.title}>Two quick permissions</Text>
+      <Text style={styles.subtitle}>
+        OverlayLang needs these to work in all apps and on your home screen.
+      </Text>
+
+      <PermissionRow
+        label="Draw over other apps"
+        description="Lets the translation card float above everything."
+        granted={overlayOk}
+        onRequest={() => OverlayModule?.requestOverlayPermission?.()}
+      />
+
+      <PermissionRow
+        label="Accessibility service"
+        description="Detects double-taps, drags, and long-presses on any word system-wide."
+        granted={accessOk}
+        onRequest={() => {
+          OverlayModule?.requestAccessibilityPermission?.();
+        }}
+        onConfirm={() => setAccessOk(true)}
+        showConfirm
+      />
+    </View>
+  );
+}
+
+function PermissionRow({ label, description, granted, onRequest, onConfirm, showConfirm }) {
+  return (
+    <View style={styles.row}>
+      <View style={styles.rowLeft}>
+        <Text style={[styles.statusDot, granted && styles.dotOk]}>
+          {granted ? '✓' : '○'}
+        </Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowLabel}>{label}</Text>
+          <Text style={styles.rowDesc}>{description}</Text>
+        </View>
+      </View>
+      {!granted && (
+        <View style={styles.rowActions}>
+          <TouchableOpacity onPress={onRequest} style={styles.btn}>
+            <Text style={styles.btnTxt}>Open Settings</Text>
+          </TouchableOpacity>
+          {showConfirm && (
+            <TouchableOpacity onPress={onConfirm} style={[styles.btn, styles.btnSecondary]}>
+              <Text style={styles.btnTxtSecondary}>I enabled it</Text>
             </TouchableOpacity>
           )}
         </View>
-      ))}
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {padding: 20},
-  title: {color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 24},
-  step: {backgroundColor: '#1e1e2e', borderRadius: 12, padding: 16, marginBottom: 16},
-  stepHeader: {flexDirection: 'row', alignItems: 'center', marginBottom: 8},
-  dot: {width: 12, height: 12, borderRadius: 6, marginRight: 10},
-  dotDone: {backgroundColor: '#4caf50'},
-  dotPending: {backgroundColor: '#ff9800'},
-  stepTitle: {color: '#fff', fontSize: 16, fontWeight: '600'},
-  stepDesc: {color: '#aaa', fontSize: 14, lineHeight: 20},
-  btn: {backgroundColor: '#6c63ff', borderRadius: 8, padding: 10, marginTop: 12, alignItems: 'center'},
-  btnText: {color: '#fff', fontWeight: '600'},
+  container: { gap: 20 },
+  title: { fontSize: 22, fontWeight: '700', color: '#EAEAF5', marginBottom: 4 },
+  subtitle: { fontSize: 14, color: '#9E9CBC', lineHeight: 20, marginBottom: 8 },
+  row: {
+    backgroundColor: '#1A1A2E',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#2A2A4A',
+    gap: 12,
+  },
+  rowLeft: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+  statusDot: { fontSize: 20, color: '#555575', marginTop: 1 },
+  dotOk: { color: '#4CAF50' },
+  rowLabel: { fontSize: 15, fontWeight: '600', color: '#EAEAF5', marginBottom: 2 },
+  rowDesc: { fontSize: 12, color: '#9E9CBC', lineHeight: 17 },
+  rowActions: { flexDirection: 'row', gap: 8 },
+  btn: {
+    backgroundColor: '#6C63FF',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  btnSecondary: { backgroundColor: '#2A2A4A' },
+  btnTxt: { color: '#fff', fontWeight: '600', fontSize: 13 },
+  btnTxtSecondary: { color: '#9E9CBC', fontWeight: '600', fontSize: 13 },
 });

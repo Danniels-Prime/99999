@@ -1,64 +1,132 @@
-import React, {useState, useEffect} from 'react';
-import {View, FlatList, Text, TouchableOpacity, StyleSheet} from 'react-native';
+/**
+ * History screen: shows all words the user has looked up, stored in AsyncStorage.
+ * Tapping a word re-opens its overlay card inline for quick review.
+ */
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  View, Text, FlatList, TouchableOpacity,
+  StyleSheet, SafeAreaView, TextInput,
+} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import OverlayCard from '../components/OverlayCard';
+
+const HISTORY_KEY = 'overlay_lang_history';
+const MAX_HISTORY = 500;
+
+export async function addToHistory(word, translation, direction) {
+  try {
+    const raw = await AsyncStorage.getItem(HISTORY_KEY);
+    const history = raw ? JSON.parse(raw) : [];
+    const exists = history.findIndex(h => h.word === word && h.direction === direction);
+    if (exists !== -1) history.splice(exists, 1);
+    history.unshift({ word, translation, direction, ts: Date.now() });
+    if (history.length > MAX_HISTORY) history.splice(MAX_HISTORY);
+    await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch (_) {}
+}
 
 export default function HistoryScreen() {
   const [history, setHistory] = useState([]);
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState(null);
 
-  const loadHistory = async () => {
-    try {
-      const data = await AsyncStorage.getItem('translation_history');
-      if (data) setHistory(JSON.parse(data));
-    } catch {}
-  };
+  const load = useCallback(async () => {
+    const raw = await AsyncStorage.getItem(HISTORY_KEY);
+    setHistory(raw ? JSON.parse(raw) : []);
+  }, []);
 
-  const clearHistory = async () => {
-    await AsyncStorage.removeItem('translation_history');
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = query.trim()
+    ? history.filter(h =>
+        h.word.toLowerCase().includes(query.toLowerCase()) ||
+        (h.translation && h.translation.toLowerCase().includes(query.toLowerCase()))
+      )
+    : history;
+
+  const clearAll = async () => {
+    await AsyncStorage.removeItem(HISTORY_KEY);
     setHistory([]);
   };
 
-  useEffect(() => { loadHistory(); }, []);
-
-  if (history.length === 0) {
-    return (
-      <View style={styles.empty}>
-        <Text style={styles.emptyText}>No translations yet.</Text>
-        <Text style={styles.emptyHint}>Copy or select text to translate.</Text>
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.container}>
-      <TouchableOpacity style={styles.clearBtn} onPress={clearHistory}>
-        <Text style={styles.clearText}>Clear History</Text>
-      </TouchableOpacity>
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.header}>
+        <Text style={styles.title}>History</Text>
+        {history.length > 0 && (
+          <TouchableOpacity onPress={clearAll}>
+            <Text style={styles.clearBtn}>Clear all</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <TextInput
+        style={styles.search}
+        placeholder="Search words..."
+        placeholderTextColor="#555575"
+        value={query}
+        onChangeText={setQuery}
+      />
+
+      {selected && (
+        <View style={styles.cardWrap}>
+          <OverlayCard
+            word={selected.word}
+            mode={1}
+            onClose={() => setSelected(null)}
+          />
+        </View>
+      )}
+
       <FlatList
-        data={history}
-        keyExtractor={(_, i) => String(i)}
-        renderItem={({item}) => (
-          <View style={styles.item}>
-            <Text style={styles.source}>{item.source}</Text>
-            <Text style={styles.translation}>{item.translation}</Text>
-            {item.phonetic ? <Text style={styles.phonetic}>[{item.phonetic}]</Text> : null}
-            <Text style={styles.time}>{new Date(item.timestamp).toLocaleString()}</Text>
-          </View>
+        data={filtered}
+        keyExtractor={(item, i) => `${item.word}_${i}`}
+        contentContainerStyle={styles.list}
+        ListEmptyComponent={
+          <Text style={styles.empty}>
+            {history.length === 0 ? 'No words looked up yet.' : 'No matches.'}
+          </Text>
+        }
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.historyItem}
+            onPress={() => setSelected(item)}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.historyWord}>{item.word}</Text>
+              <Text style={styles.historyTranslation}>{item.translation}</Text>
+            </View>
+            <Text style={styles.historyDir}>
+              {item.direction === 'en_es' ? '🇺🇸→🇪🇸' : '🇪🇸→🇺🇸'}
+            </Text>
+          </TouchableOpacity>
         )}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {flex: 1, backgroundColor: '#0f0f1a'},
-  empty: {flex: 1, backgroundColor: '#0f0f1a', alignItems: 'center', justifyContent: 'center'},
-  emptyText: {color: '#fff', fontSize: 18, marginBottom: 8},
-  emptyHint: {color: '#888', fontSize: 14},
-  clearBtn: {alignItems: 'flex-end', padding: 16},
-  clearText: {color: '#e74c3c', fontSize: 14},
-  item: {backgroundColor: '#1e1e2e', margin: 8, borderRadius: 12, padding: 16, borderLeftWidth: 3, borderLeftColor: '#6c63ff'},
-  source: {color: '#aaa', fontSize: 13, marginBottom: 4},
-  translation: {color: '#fff', fontSize: 18, fontWeight: 'bold'},
-  phonetic: {color: '#6c63ff', fontSize: 13, fontStyle: 'italic', marginTop: 4},
-  time: {color: '#555', fontSize: 11, marginTop: 8},
+  safe: { flex: 1, backgroundColor: '#0A0A1A' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, paddingBottom: 12 },
+  title: { fontSize: 26, fontWeight: '800', color: '#EAEAF5' },
+  clearBtn: { fontSize: 13, color: '#6C63FF' },
+  search: {
+    marginHorizontal: 20, marginBottom: 12,
+    backgroundColor: '#1A1A2E', borderRadius: 10,
+    paddingHorizontal: 14, paddingVertical: 10,
+    color: '#EAEAF5', fontSize: 14,
+    borderWidth: 1, borderColor: '#2A2A4A',
+  },
+  list: { paddingHorizontal: 20, paddingBottom: 40, gap: 8 },
+  empty: { color: '#555575', fontSize: 14, textAlign: 'center', marginTop: 40 },
+  historyItem: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#1A1A2E', borderRadius: 12,
+    padding: 14, borderWidth: 1, borderColor: '#2A2A4A',
+  },
+  historyWord: { fontSize: 15, fontWeight: '700', color: '#EAEAF5', marginBottom: 2 },
+  historyTranslation: { fontSize: 13, color: '#6C63FF' },
+  historyDir: { fontSize: 14 },
+  cardWrap: { marginHorizontal: 20, marginBottom: 12 },
 });

@@ -1,34 +1,31 @@
-import dict from '../data/top3000_en_es.json';
+/**
+ * High-level dictionary facade: combines translation + phonetics,
+ * returns a unified result object for the overlay card.
+ */
+import { translate } from './translation';
+import { getPhonetic } from './phonetics';
 
-const enToEs = new Map();
-const esToEn = new Map();
+/**
+ * @param {string} text
+ * @param {'en_es'|'es_en'} direction
+ * @returns {Promise<DictionaryResult>}
+ *
+ * @typedef {Object} DictionaryResult
+ * @property {string} original
+ * @property {string} translation
+ * @property {string|null} ipa        — null for Spanish source words
+ * @property {Array<{en:string,es:string}>} examples
+ */
+export async function lookup(text, direction = 'en_es') {
+  const [translationData, ipa] = await Promise.all([
+    translate(text, direction),
+    getPhonetic(text, direction),
+  ]);
 
-dict.forEach(entry => {
-  enToEs.set(entry.en.toLowerCase(), entry);
-  esToEn.set(entry.es.toLowerCase(), entry);
-});
-
-export function lookupEnToEs(word) {
-  return enToEs.get(word.toLowerCase().trim()) || null;
-}
-
-export function lookupEsToEn(word) {
-  return esToEn.get(word.toLowerCase().trim()) || null;
-}
-
-export function lookupAuto(word) {
-  const lower = word.toLowerCase().trim();
-  return enToEs.get(lower) || esToEn.get(lower) || null;
-}
-
-export function searchPrefix(prefix, limit = 10) {
-  const lower = prefix.toLowerCase();
-  const results = [];
-  for (const [key, entry] of enToEs) {
-    if (key.startsWith(lower)) {
-      results.push(entry);
-      if (results.length >= limit) break;
-    }
-  }
-  return results;
+  return {
+    original: text,
+    translation: translationData.translation,
+    ipa,
+    examples: translationData.examples,
+  };
 }

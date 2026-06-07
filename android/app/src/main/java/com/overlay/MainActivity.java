@@ -6,6 +6,7 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint;
 import com.facebook.react.defaults.DefaultReactActivityDelegate;
 
 public class MainActivity extends ReactActivity {
+
     @Override
     protected String getMainComponentName() {
         return "OverlayLang";
@@ -14,9 +15,9 @@ public class MainActivity extends ReactActivity {
     @Override
     protected ReactActivityDelegate createReactActivityDelegate() {
         return new DefaultReactActivityDelegate(
-            this,
-            getMainComponentName(),
-            DefaultNewArchitectureEntryPoint.getFabricEnabled()
+                this,
+                getMainComponentName(),
+                DefaultNewArchitectureEntryPoint.getFabricEnabled()
         );
     }
 }

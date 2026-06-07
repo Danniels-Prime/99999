@@ -1,30 +1,49 @@
 import React from 'react';
-import {NavigationContainer} from '@react-navigation/native';
-import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
-import {SafeAreaProvider} from 'react-native-safe-area-context';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Text, StatusBar } from 'react-native';
+
 import HomeScreen from './screens/HomeScreen';
-import HistoryScreen from './screens/HistoryScreen';
 import SettingsScreen from './screens/SettingsScreen';
+import HistoryScreen from './screens/HistoryScreen';
 
 const Tab = createBottomTabNavigator();
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        <Tab.Navigator
-          screenOptions={{
-            tabBarStyle: {backgroundColor: '#1a1a2e'},
-            tabBarActiveTintColor: '#6c63ff',
-            tabBarInactiveTintColor: '#888',
-            headerStyle: {backgroundColor: '#1a1a2e'},
-            headerTintColor: '#fff',
-          }}>
-          <Tab.Screen name="Home" component={HomeScreen} />
-          <Tab.Screen name="History" component={HistoryScreen} />
-          <Tab.Screen name="Settings" component={SettingsScreen} />
-        </Tab.Navigator>
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <NavigationContainer>
+      <StatusBar barStyle="light-content" backgroundColor="#0A0A1A" />
+      <Tab.Navigator
+        screenOptions={{
+          headerShown: false,
+          tabBarStyle: {
+            backgroundColor: '#1A1A2E',
+            borderTopColor: '#2A2A4A',
+            borderTopWidth: 1,
+            height: 60,
+            paddingBottom: 8,
+          },
+          tabBarActiveTintColor: '#6C63FF',
+          tabBarInactiveTintColor: '#555575',
+          tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        }}
+      >
+        <Tab.Screen
+          name="Home"
+          component={HomeScreen}
+          options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>⚡</Text> }}
+        />
+        <Tab.Screen
+          name="History"
+          component={HistoryScreen}
+          options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>📋</Text> }}
+        />
+        <Tab.Screen
+          name="Settings"
+          component={SettingsScreen}
+          options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>⚙️</Text> }}
+        />
+      </Tab.Navigator>
+    </NavigationContainer>
   );
 }

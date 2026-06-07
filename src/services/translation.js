@@ -1,40 +1,76 @@
-import {lookupEnToEs, lookupEsToEn, lookupAuto} from './dictionary';
-import {toPhonetic} from './phonetics';
+/**
+ * Translation service using MyMemory API (free, no API key required).
+ * Falls back to the local bundled dictionary on network failure.
+ */
+import localDict from '../data/top3000_en_es.json';
 
-export function translate(text, direction = 'auto') {
-  const words = text.trim().split(/\s+/);
+const BASE_URL = 'https://api.mymemory.translated.net/get';
 
-  if (words.length === 1) {
-    let entry = null;
-    if (direction === 'en-es') entry = lookupEnToEs(text);
-    else if (direction === 'es-en') entry = lookupEsToEn(text);
-    else entry = lookupAuto(text);
+/**
+ * Translates text between English and Spanish.
+ * @param {string} text
+ * @param {'en_es'|'es_en'} direction
+ * @returns {Promise<{translation: string, examples: string[]}>}
+ */
+export async function translate(text, direction = 'en_es') {
+  const langpair = direction === 'en_es' ? 'en|es' : 'es|en';
+  const word = text.toLowerCase().trim();
 
-    if (entry) {
-      const isEnSource = entry.en.toLowerCase() === text.toLowerCase();
-      const translation = isEnSource ? entry.es : entry.en;
+  // 1. Try local dictionary first (instant, offline)
+  const local = lookupLocal(word, direction);
+  if (local) return local;
+
+  // 2. Fetch from MyMemory API
+  try {
+    const url = `${BASE_URL}?q=${encodeURIComponent(text)}&langpair=${langpair}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    const json = await res.json();
+
+    if (json.responseStatus === 200 && json.responseData?.translatedText) {
       return {
-        source: text,
-        translation,
-        phonetic: isEnSource ? toPhonetic(translation) : '',
-        found: true,
+        translation: json.responseData.translatedText,
+        examples: extractExamples(json.matches, text, direction),
       };
     }
-  } else if (words.length <= 5) {
-    const translated = words.map(word => {
-      const entry = lookupAuto(word);
-      if (!entry) return word;
-      const isEnSource = entry.en.toLowerCase() === word.toLowerCase();
-      return isEnSource ? entry.es : entry.en;
-    });
-    const translationStr = translated.join(' ');
-    return {
-      source: text,
-      translation: translationStr,
-      phonetic: toPhonetic(translationStr),
-      found: translationStr !== text,
-    };
+  } catch (_) {
+    // Network failure — fall through to empty result
   }
 
-  return {source: text, translation: text, phonetic: '', found: false};
+  return { translation: '—', examples: [] };
+}
+
+function lookupLocal(word, direction) {
+  const entry = localDict[word];
+  if (!entry) return null;
+
+  if (direction === 'en_es') {
+    return {
+      translation: entry.es,
+      examples: entry.ex
+        ? [{ en: entry.ex.en, es: entry.ex.es }]
+        : [],
+    };
+  } else {
+    // es_en: search by Spanish value (slower but works for a 3000-word set)
+    const hit = Object.entries(localDict).find(
+      ([, v]) => v.es?.toLowerCase() === word
+    );
+    if (!hit) return null;
+    return {
+      translation: hit[0], // English key
+      examples: hit[1].ex ? [{ en: hit[1].ex.en, es: hit[1].ex.es }] : [],
+    };
+  }
+}
+
+function extractExamples(matches, original, direction) {
+  if (!matches || !Array.isArray(matches)) return [];
+  return matches
+    .filter(m => m.segment && m.translation && m.quality > 50)
+    .slice(0, 2)
+    .map(m =>
+      direction === 'en_es'
+        ? { en: m.segment, es: m.translation }
+        : { en: m.translation, es: m.segment }
+    );
 }
