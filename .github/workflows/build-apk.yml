@@ -56,6 +56,12 @@ jobs:
             cp "$dir/ic_launcher.png" "$dir/ic_launcher_round.png"
           done
 
+      - name: Regenerate Gradle wrapper
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.3-bin.zip -O /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp/gradle
+          /tmp/gradle/gradle-8.3/bin/gradle wrapper --gradle-version 8.3 --project-dir android
+
       - name: Build debug APK
         run: |
           cd android
