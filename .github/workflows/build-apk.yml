@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version label (e.g. v1.0)'
+        required: true
+        default: 'v1.0'
 
 jobs:
   build:
@@ -58,9 +64,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
           mv "$APK" "OverlayLang-${TAG}.apk"
           gh release create "$TAG" "OverlayLang-${TAG}.apk" \
             --title "OverlayLang ${TAG}" \
-            --notes $'## Install\n1. Download `OverlayLang-'"${TAG}"$'.apk` below\n2. Transfer to your Android phone\n3. Open the file on the phone → tap **Install** (allow "install unknown apps" first)\n4. Open the app → grant **Overlay** + **Accessibility** permissions → tap **Start Monitoring**\n\nOnce set up: copy any word, double-tap a word, or select text in any app → translation appears and reads aloud.'
+            --notes $'## Install\n1. Download `OverlayLang-'"${TAG}"$'.apk` below\n2. Transfer to your Android phone\n3. Open the file on the phone → tap **Install** (allow "install unknown apps" first)\n4. Open the app → grant **Overlay** + **Accessibility** permissions → tap **Start Monitoring**\n\nOnce set up: copy any word, double-tap a word, or select text in any app → translation appears and reads aloud.' \
+            --prerelease=false
