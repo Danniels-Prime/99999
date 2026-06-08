@@ -1,0 +1,66 @@
+name: Build & Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install JS dependencies
+        run: npm install
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Generate launcher icons
+        run: |
+          for cfg in "mdpi:48" "hdpi:72" "xhdpi:96" "xxhdpi:144" "xxxhdpi:192"; do
+            density="${cfg%%:*}"; px="${cfg##*:}"
+            dir="android/app/src/main/res/mipmap-$density"
+            mkdir -p "$dir"
+            convert -size "${px}x${px}" xc:'#6c63ff' "$dir/ic_launcher.png"
+            cp "$dir/ic_launcher.png" "$dir/ic_launcher_round.png"
+          done
+
+      - name: Build debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          mv "$APK" "OverlayLang-${TAG}.apk"
+          gh release create "$TAG" "OverlayLang-${TAG}.apk" \
+            --title "OverlayLang ${TAG}" \
+            --notes $'## Install\n1. Download `OverlayLang-'"${TAG}"$'.apk` below\n2. Transfer to your Android phone\n3. Open the file on the phone → tap **Install** (allow "install unknown apps" first)\n4. Open the app → grant **Overlay** + **Accessibility** permissions → tap **Start Monitoring**\n\nOnce set up: copy any word, double-tap a word, or select text in any app → translation appears and reads aloud.'
