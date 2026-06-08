@@ -31,16 +31,18 @@ jobs:
       - name: Install JS dependencies
         run: npm install
 
-      # Installs Gradle 8.6 + handles caching — replaces wrapper jar issues
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Setup Gradle 8.6
+        uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.6'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125'
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name "sdkmanager" 2>/dev/null | head -1)
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses 2>/dev/null || true
+            "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0" "ndk;26.1.10909125" 2>&1 | tail -3 || true
+          fi
 
       - name: Install ImageMagick and generate launcher icons
         run: |
@@ -83,11 +85,5 @@ jobs:
           mv "$APK" "OverlayLang-${TAG}.apk"
           gh release create "$TAG" "OverlayLang-${TAG}.apk" \
             --title "OverlayLang ${TAG}" \
-            --notes '## Install
-1. Download the APK below
-2. Transfer to your Android phone
-3. Open the file → tap Install (allow "install unknown apps" first)
-4. Grant overlay + accessibility permissions → tap Start Monitoring
-
-Once set up: copy any word, double-tap, or select text in any app → translation appears and reads aloud.' \
+            --notes "Download the APK, transfer to your phone, tap Install, grant permissions." \
             --prerelease=false
