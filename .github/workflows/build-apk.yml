@@ -58,9 +58,27 @@ jobs:
 
       - name: Regenerate Gradle wrapper
         run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.3-bin.zip -O /tmp/gradle.zip
+          wget -q https://services.gradle.org/distributions/gradle-8.6-bin.zip -O /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp/gradle
-          /tmp/gradle/gradle-8.3/bin/gradle wrapper --gradle-version 8.3 --project-dir android
+          /tmp/gradle/gradle-8.6/bin/gradle wrapper --gradle-version 8.6 --project-dir android
+
+      - name: Set up Android SDK components
+        run: |
+          yes | sdkmanager --licenses 2>/dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;26.1.10909125"
+
+      - name: Generate debug keystore
+        run: |
+          if [ ! -f android/app/debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore android/app/debug.keystore \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 \
+              -validity 10000 \
+              -storepass android \
+              -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
       - name: Build debug APK
         run: |
@@ -81,5 +99,5 @@ jobs:
           mv "$APK" "OverlayLang-${TAG}.apk"
           gh release create "$TAG" "OverlayLang-${TAG}.apk" \
             --title "OverlayLang ${TAG}" \
-            --notes $'## Install\n1. Download `OverlayLang-'"${TAG}"$'.apk` below\n2. Transfer to your Android phone\n3. Open the file on the phone → tap **Install** (allow "install unknown apps" first)\n4. Open the app → grant **Overlay** + **Accessibility** permissions → tap **Start Monitoring**\n\nOnce set up: copy any word, double-tap a word, or select text in any app → translation appears and reads aloud.' \
+            --notes $'## Install\n1. Download `OverlayLang-'"${TAG}"$'.apk` below\n2. Transfer to your Android phone\n3. Open the file → tap **Install** (allow "install unknown apps" first)\n4. Open the app → grant **Overlay** + **Accessibility** permissions → tap **Start Monitoring**\n\nOnce set up: copy any word, double-tap a word, or select text in any app → translation appears and reads aloud.' \
             --prerelease=false
