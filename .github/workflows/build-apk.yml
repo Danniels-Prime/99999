@@ -67,10 +67,7 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US" 2>/dev/null || true
 
       - name: Build debug APK
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+        run: gradle -p android assembleDebug --no-daemon
 
       - name: Create GitHub Release
         env:
