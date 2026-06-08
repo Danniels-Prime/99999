@@ -84,3 +84,22 @@ jobs:
             --title "OverlayLang ${TAG}" \
             --notes "Download the APK, transfer to your phone, tap Install, grant permissions." \
             --prerelease=false
+
+      - name: Write job summary
+        if: always()
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          if ls OverlayLang-*.apk 2>/dev/null | grep -q .; then
+            echo "## ✅ OverlayLang ${TAG} — Build Succeeded" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**[⬇ Download APK from Releases](https://github.com/${{ github.repository }}/releases/tag/${TAG})**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Install: transfer APK to phone → tap Install → grant Overlay + Accessibility permissions → tap Start Monitoring." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Build Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Check the **Build debug APK** step above for the error." >> $GITHUB_STEP_SUMMARY
+          fi
