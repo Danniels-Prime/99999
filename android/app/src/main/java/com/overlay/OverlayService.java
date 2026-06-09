@@ -28,6 +28,10 @@ import java.util.Map;
 public class OverlayService extends Service {
     public static final String ACTION_SHOW = "com.overlay.SHOW_OVERLAY";
     public static final String ACTION_HIDE = "com.overlay.HIDE_OVERLAY";
+    public static final String EXTRA_WORD = "word";
+    public static final String EXTRA_MODE = "mode";
+    public static final String MODE_SENTENCE = "sentence";
+    public static final String MODE_CLIPBOARD = "clipboard";
     private static final String CHANNEL_ID = "overlay_service_channel";
     private static final int NOTIFICATION_ID = 1003;
     private static final long AUTO_DISMISS_MS = 8000;
@@ -83,6 +87,7 @@ public class OverlayService extends Service {
         startForeground(NOTIFICATION_ID, buildNotification());
         if (intent != null && ACTION_SHOW.equals(intent.getAction())) {
             String text = intent.getStringExtra("text");
+            if (text == null) text = intent.getStringExtra(EXTRA_WORD);
             if (text != null && !text.isEmpty()) showOverlay(text.trim());
         } else if (intent != null && ACTION_HIDE.equals(intent.getAction())) {
             hideOverlay();

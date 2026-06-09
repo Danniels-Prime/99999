@@ -2,7 +2,7 @@ apply plugin: "com.android.application"
 apply plugin: "com.facebook.react"
 
 react {
-    // autolinking handled by RN Gradle Plugin
+    autolinkLibrariesWithApp()
 }
 
 android {
